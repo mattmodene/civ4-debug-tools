@@ -270,7 +270,7 @@ def test_dir_resolution_flag_env_mod_dir_and_no_default(monkeypatch):
     assert err.value.code == remote.EXIT_USAGE
     assert remote.ENV_MOD_DIR in str(err.value) and "--dir" in str(err.value)
     monkeypatch.setenv(remote.ENV_MOD_DIR, "/mod")
-    assert remote.resolve_dir(None) == "/mod/UserSettings/AgentRepl"
+    assert remote.resolve_dir(None) == os.path.join("/mod", "UserSettings", "AgentRepl")
     monkeypatch.setenv(remote.ENV_DIR, "/env")
     assert remote.resolve_dir(None) == "/env"
     assert remote.resolve_dir("/flag") == "/flag"

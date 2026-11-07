@@ -21,7 +21,7 @@ python3 -I tools/dev.py test    # pytest
 python3 -I tools/dev.py fuzz    # malformed-input fuzz on the committed synthetic fixtures
 ```
 
-- Python 3.11 or newer (`.python-version` holds the development floor; `pyproject.toml` has `requires-python`).
+- Python 3.11 or newer (`.python-version` holds the local development floor; CI uses the latest 3.11 patch; `pyproject.toml` has `requires-python`).
 - Install the dev tools with `pip install -e .[dev]`. The pytest pin is in `pyproject.toml`; the ruff pin is `RUFF_VERSION` in `tools/dev.py` and is mirrored in `.github/workflows/ci.yml`. Read the pins there rather than from this file. `tools/dev.py` uses a matching `ruff` on PATH, else `uvx ruff@<version>`.
 - The real-binary tests need game files that are not in the repository. Set `CIV4DBG_TEST_DATA` to a directory holding them (see `tests/realdata.py`); without it they skip, saying why.
 - CI runs `check` on Linux, Windows and macOS and never needs the game, Wine or any game file. The Windows job is non-blocking.

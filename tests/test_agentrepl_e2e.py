@@ -171,7 +171,9 @@ def test_write_gate(game, exch):
     assert r.returncode == 5 and "refused by the game" in r.stderr
     # both present: runs
     r = host(exch, "--write", "-c", "import os\nprint(os.sep)")
-    assert (r.returncode, r.stdout) == (0, "/\n"), r.stderr
+    # The game module runs in this process, so it prints this OS's separator ("\\" on Windows). On Windows
+    # the host also prints its documented one-time reduced-protection warning to stderr; stdout stays exact.
+    assert (r.returncode, r.stdout) == (0, os.sep + "\n"), r.stderr
 
 
 def test_host_timeout_did_not_run(exch):
@@ -305,7 +307,8 @@ def test_huge_request(game, exch):
 
 def test_host_rejects_oversize_before_sending(exch):
     enable(exch)
-    r = host(exch, "-c", "#" * (70 * 1024))
+    # Via stdin, not -c: a 70 KiB command line exceeds the Windows limit (WinError 206) before the host runs.
+    r = host(exch, "-", stdin="#" * (70 * 1024))
     assert r.returncode == 2 and not list(exch.glob("req-*"))
 
 

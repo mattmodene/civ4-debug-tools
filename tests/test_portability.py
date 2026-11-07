@@ -74,6 +74,7 @@ def test_windows_model_accepts_an_open_mode_and_warns_once(windows_model, exch, 
         assert named in err
 
 
+@pytest.mark.skipif(not hasattr(os, "getuid"), reason="the POSIX check_dir path needs uid, O_NOFOLLOW and dir_fd")
 def test_posix_model_never_prints_the_reduced_protection_warning(exch, capsys, monkeypatch):
     monkeypatch.setattr(remote, "_HARDENED", True)
     monkeypatch.setattr(remote, "_warned", False)
@@ -218,6 +219,11 @@ def test_exclusive_create_refuses_a_planted_link(exch, tmp_path):
 # --- macOS: /var -> /private/var ------------------------------------------------
 
 
+def _fs_uid(tmp_path):
+    """The uid that owns files under tmp_path (the process uid on POSIX; 0 on Windows, which has no uid)."""
+    return os.lstat(tmp_path).st_uid
+
+
 def _alias_tree(tmp_path, target="private/var"):
     root = tmp_path / "fsroot"
     (root / "private" / "var" / "folders").mkdir(parents=True)
@@ -228,7 +234,7 @@ def _alias_tree(tmp_path, target="private/var"):
 
 def test_system_alias_is_resolved_when_root_owned(tmp_path, monkeypatch):
     root = _alias_tree(tmp_path)
-    monkeypatch.setattr(remote, "_ROOT_UID", os.getuid())  # stand-in for "owned by root"
+    monkeypatch.setattr(remote, "_ROOT_UID", _fs_uid(tmp_path))  # stand-in for "owned by root"
     got = remote._resolve_system_alias("/var/folders/x", root=str(root))
     assert got == os.path.join(str(root), "private", "var", "folders", "x")
     assert remote._resolve_system_alias("/var", root=str(root)) == os.path.join(str(root), "private", "var")
@@ -236,26 +242,26 @@ def test_system_alias_is_resolved_when_root_owned(tmp_path, monkeypatch):
 
 def test_system_alias_not_owned_by_root_is_left_to_be_refused(tmp_path, monkeypatch):
     root = _alias_tree(tmp_path)
-    monkeypatch.setattr(remote, "_ROOT_UID", os.getuid() + 12345)
+    monkeypatch.setattr(remote, "_ROOT_UID", _fs_uid(tmp_path) + 12345)
     assert remote._resolve_system_alias("/var/folders/x", root=str(root)) == "/var/folders/x"
 
 
 def test_system_alias_pointing_anywhere_else_is_left_to_be_refused(tmp_path, monkeypatch):
     root = _alias_tree(tmp_path, target="elsewhere")
-    monkeypatch.setattr(remote, "_ROOT_UID", os.getuid())
+    monkeypatch.setattr(remote, "_ROOT_UID", _fs_uid(tmp_path))
     assert remote._resolve_system_alias("/var/folders/x", root=str(root)) == "/var/folders/x"
 
 
 def test_system_alias_pointing_through_another_link_is_left_to_be_refused(tmp_path, monkeypatch):
     root = _alias_tree(tmp_path, target="hop")
     symlink_or_skip(root / "private" / "var", root / "hop")  # var -> hop -> private/var: same place, not literal
-    monkeypatch.setattr(remote, "_ROOT_UID", os.getuid())
+    monkeypatch.setattr(remote, "_ROOT_UID", _fs_uid(tmp_path))
     assert remote._resolve_system_alias("/var/folders/x", root=str(root)) == "/var/folders/x"
 
 
 def test_other_leading_components_are_never_rewritten(tmp_path, monkeypatch):
     root = _alias_tree(tmp_path)
-    monkeypatch.setattr(remote, "_ROOT_UID", os.getuid())
+    monkeypatch.setattr(remote, "_ROOT_UID", _fs_uid(tmp_path))
     assert remote._resolve_system_alias("/home/x", root=str(root)) == "/home/x"
 
 
@@ -263,7 +269,7 @@ def test_alias_rewrite_only_happens_on_darwin(monkeypatch):
     monkeypatch.setattr(remote, "_HARDENED", True)
     monkeypatch.setattr(remote, "_resolve_system_alias", lambda p: "REWRITTEN")
     monkeypatch.setattr(remote, "_is_darwin", lambda: False)
-    assert remote._normalize("/var/x") == "/var/x"
+    assert remote._normalize("/var/x") == os.path.abspath("/var/x")  # abspath adds a drive letter on Windows
     monkeypatch.setattr(remote, "_is_darwin", lambda: True)
     assert remote._normalize("/var/x") == "REWRITTEN"
 

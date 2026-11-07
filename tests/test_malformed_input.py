@@ -8,9 +8,9 @@ code. The tests that pinned the earlier leaks as strict xfails are now plain
 tests asserting the clean error.
 """
 
+import faulthandler
 import pathlib
 import random
-import signal
 import struct
 
 import pytest
@@ -26,22 +26,23 @@ SMALL = (FIX / "small.pdb").read_bytes()
 CLEAN_PDB = (MsfError, PdbError)
 
 
-class Timeout(Exception):
-    pass
-
-
 @pytest.fixture
 def deadline():
-    """Fail (instead of hanging the run) if the body takes over 10 seconds."""
+    """Abort the whole test run (instead of hanging it) if the body takes over 10 seconds.
 
-    def fire(*_a):
-        raise Timeout("operation did not finish in 10 s")
-
-    old = signal.signal(signal.SIGALRM, fire)
-    signal.alarm(10)
-    yield
-    signal.alarm(0)
-    signal.signal(signal.SIGALRM, old)
+    Cross-platform and dependency-free: faulthandler's watchdog thread dumps every thread's traceback
+    to stderr and terminates the process if the body is still running after 10 s. That ends the whole
+    pytest run with a non-zero exit rather than failing one test, which is the right trade for "a hang
+    is a bug". Under pytest's default output capture the traceback dump is swallowed; rerun with `-s`
+    to see where it was stuck. This uses faulthandler's single global timer, so it would conflict with
+    pytest's `faulthandler_timeout` option if that were ever set. (signal.SIGALRM, used before, does
+    not exist on Windows.)
+    """
+    faulthandler.dump_traceback_later(10, exit=True)
+    try:
+        yield
+    finally:
+        faulthandler.cancel_dump_traceback_later()
 
 
 def _super(raw: bytes, **fields) -> bytes:

@@ -536,7 +536,7 @@ Each exits 0 on success and non-zero on failure. Setup: `pip install -e ".[dev]"
 `uvx ruff@0.17.4`, otherwise it stops with an install hint. The pin lives in `tools/dev.py`
 (`RUFF_VERSION`) and `.github/workflows/ci.yml`; change both together.
 
-CI (`.github/workflows/ci.yml`) runs `tools/dev.py check` on the exact release in `.python-version` (3.11.18) and the latest 3.x. **CI never
+CI (`.github/workflows/ci.yml`) runs `tools/dev.py check` on the latest 3.11 patch release (the supported floor) and the latest 3.x, each on Linux, Windows and macOS. (`.python-version` pins 3.11.18 for local development only; setup-python has no build of it for macOS arm64 or Windows.) **CI never
 needs the game, Wine, a game DLL or PDB, a minidump or a test-data directory.** The tests that use real game
 files (`tests/test_real_*.py`, and the named `.dmp` they need) skip themselves with a reason that names the
 missing file when it is absent; everything else runs on synthetic inputs and a small committed PDB built

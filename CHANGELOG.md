@@ -19,6 +19,16 @@ Standards deviations are recorded in `.standards-config.json` and printed by the
 
 ## [Unreleased]
 
+### Changed
+
+- CI: the Python floor leg now runs the latest 3.11 patch release on all three operating systems
+  (setup-python has no 3.11.18 build for macOS arm64 or Windows); `.python-version` is for local
+  development only.
+- CI: `actions/checkout`, `actions/setup-python` and `actions/github-script` are pinned to commit SHAs.
+- Test suite: portability fixes so it runs on Windows (a cross-platform watchdog replaces SIGALRM in the
+  malformed-input tests; the macOS path-alias tests no longer need `os.getuid`; path-separator and
+  command-line-length assumptions are gone). No product code changed.
+
 ## [0.1.0] - 2026-11-07
 
 Initial public release.

@@ -308,11 +308,16 @@ def test_f8_sigterm_is_treated_like_ctrl_c(exch, tmp_path):
     assert not [p for p in os.listdir(exch) if p.startswith("req-")]
 
 
-def test_f8_permission_error_on_withdrawal_is_reported(exch, capsys, monkeypatch):
+@pytest.mark.parametrize("hardened", [True, False], ids=["dir_fd", "path_based"])
+def test_f8_permission_error_on_withdrawal_is_reported(exch, capsys, monkeypatch, hardened):
+    # hardened=False is the Windows model: the removal gets a full path, not a bare name plus dir_fd.
+    # The mock matches on the basename so it fires in both forms.
+    monkeypatch.setattr(remote, "_HARDENED", hardened and remote._HARDENED)
+    monkeypatch.setattr(remote, "_warned", True)  # keep the one-time Windows-model warning out of stderr
     real = os.unlink
 
     def deny(path, *a, **k):
-        if str(path).startswith("req-"):
+        if os.path.basename(str(path)).startswith("req-"):
             raise PermissionError(13, "denied")
         return real(path, *a, **k)
 
