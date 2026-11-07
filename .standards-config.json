@@ -1,0 +1,17 @@
+{
+  "arch-002": {
+    "enabled": false
+  },
+  "deviations": {
+    "ARCH-002": {
+      "reason": "Single-author tool. Its architecture decisions are recorded as ADRs (CDT-001, CDT-002 under docs/architecture/adrs/cdt/) without a decision-traceability graph; a graph would cost more than it protects at this size.",
+      "owner": "Maintainer",
+      "end": "2027-05-07"
+    },
+    "ENG-005 §1.2": {
+      "reason": "Pre-1.0 SemVer (release 0.1.0, not 1.0.0) while the civ4dbg command line and the AgentRepl protocol may still change.",
+      "owner": "Maintainer",
+      "end": "2027-05-07"
+    }
+  }
+}

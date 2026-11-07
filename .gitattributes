@@ -1,0 +1,12 @@
+# Text is stored and checked out with LF on every OS (Windows CI would otherwise get CRLF from
+# core.autocrlf and break byte-exact comparisons, e.g. the installed AgentRepl.py against its source).
+* text=auto eol=lf
+
+# Binary fixtures and anything else that must never be line-ending converted or diffed as text.
+tests/fixtures/*.dll binary
+tests/fixtures/*.pdb binary
+*.dll binary
+*.pdb binary
+*.dmp binary
+*.exe binary
+*.pyc binary

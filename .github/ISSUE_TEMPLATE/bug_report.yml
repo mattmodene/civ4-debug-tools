@@ -1,0 +1,61 @@
+name: Bug report
+description: Something in civ4-debug-tools does not work as documented.
+labels: ["bug"]
+body:
+  - type: markdown
+    attributes:
+      value: |
+        Thank you for the report. Pull requests and attached code are not accepted (see CONTRIBUTING.md); describe the problem in words.
+        Do not attach game files, mod DLLs or PDBs you may not redistribute. Report security problems privately (see SECURITY.md).
+  - type: textarea
+    id: command
+    attributes:
+      label: What you ran
+      description: The exact command line, with paths shortened if you like.
+      render: shell
+    validations:
+      required: true
+  - type: textarea
+    id: expected
+    attributes:
+      label: Expected behavior
+    validations:
+      required: true
+  - type: textarea
+    id: actual
+    attributes:
+      label: What happened
+      description: The full error text and the exit code.
+    validations:
+      required: true
+  - type: input
+    id: os
+    attributes:
+      label: Operating system
+      description: Include the Wine or Proton version if the game ran under it.
+    validations:
+      required: true
+  - type: input
+    id: python
+    attributes:
+      label: Python version
+      placeholder: "3.11.18"
+    validations:
+      required: true
+  - type: input
+    id: version
+    attributes:
+      label: civ4-debug-tools version or commit
+      placeholder: "0.1.0"
+    validations:
+      required: true
+  - type: input
+    id: mod
+    attributes:
+      label: Mod name and version
+      description: Say whether the mod ships BUG if the problem involves AgentRepl.
+  - type: textarea
+    id: extra
+    attributes:
+      label: Anything else
+      description: A small reproduction that is safe to share, such as a crafted PDB or minidump description, or the request text for the console.

@@ -1,0 +1,8 @@
+blank_issues_enabled: false
+contact_links:
+  - name: Report a security vulnerability (private)
+    url: https://github.com/mattmodene/civ4-debug-tools/security/advisories/new
+    about: Report vulnerabilities privately here, never in a public issue. See SECURITY.md.
+  - name: Questions and ideas (Discussions)
+    url: https://github.com/mattmodene/civ4-debug-tools/discussions
+    about: Ask a question or float an idea. Pull requests are not accepted; see CONTRIBUTING.md.

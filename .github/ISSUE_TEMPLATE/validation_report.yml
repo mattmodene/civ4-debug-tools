@@ -1,0 +1,83 @@
+name: Validation report
+description: Tell us how a component behaves on a system or mod the maintainer cannot test.
+labels: ["needs-validation"]
+body:
+  - type: markdown
+    attributes:
+      value: |
+        Validation reports are the most useful way to help. Failures are as welcome as successes. See docs/platform-support.md for the current matrix.
+        The maintainer repeats the check independently before changing the matrix. Do not attach game files or code.
+  - type: input
+    id: os
+    attributes:
+      label: Operating system and version
+      placeholder: "Windows 11 23H2 / macOS 14 / Arch Linux with Proton 9"
+    validations:
+      required: true
+  - type: input
+    id: python
+    attributes:
+      label: Python version
+      placeholder: "3.12.4"
+    validations:
+      required: true
+  - type: input
+    id: civ4
+    attributes:
+      label: Civ4 version or edition
+      placeholder: "Beyond the Sword 3.19, Steam"
+    validations:
+      required: true
+  - type: input
+    id: mod
+    attributes:
+      label: Mod name and version
+    validations:
+      required: true
+  - type: dropdown
+    id: bug
+    attributes:
+      label: Does the mod ship BUG?
+      options:
+        - "Yes"
+        - "No"
+        - "Not sure"
+    validations:
+      required: true
+  - type: dropdown
+    id: component
+    attributes:
+      label: Component tested
+      options:
+        - Offline PDB and minidump reader
+        - "CLI commands (resolve, dump, compare, info)"
+        - "civ4dbg exec (AgentRepl client)"
+        - AgentRepl installer
+        - AgentRepl in the game
+        - Test suite (tools/dev.py check)
+        - Other
+    validations:
+      required: true
+  - type: textarea
+    id: ran
+    attributes:
+      label: What you ran
+      description: The commands, in order.
+      render: shell
+    validations:
+      required: true
+  - type: dropdown
+    id: result
+    attributes:
+      label: Result
+      options:
+        - Worked
+        - Partly worked
+        - Failed
+    validations:
+      required: true
+  - type: textarea
+    id: output
+    attributes:
+      label: Details and output
+      description: Output for anything that failed or looked wrong, and anything surprising.

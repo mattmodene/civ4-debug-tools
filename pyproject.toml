@@ -1,0 +1,61 @@
+[build-system]
+requires = ["setuptools>=77"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "civ4-debug-tools"
+version = "0.1.0"
+description = "Resolve crash addresses in a Civ4 mod's CvGameCoreDLL.dll to functions via its PDB, plus an opt-in in-game Python console (standard library only)"
+readme = "README.md"
+requires-python = ">=3.11"
+license = "MIT"
+license-files = ["LICENSE"]
+authors = [{ name = "Matt Modene", email = "mattmodene@modene.software" }]
+dependencies = []
+
+[project.optional-dependencies]
+# Development only; the package itself has no runtime dependencies. ruff is pinned separately
+# (RUFF_VERSION in tools/dev.py and .github/workflows/ci.yml); pytest is pinned exactly here and in CI.
+dev = ["pytest==9.1.1"]
+
+[project.urls]
+Homepage = "https://github.com/mattmodene/civ4-debug-tools"
+Repository = "https://github.com/mattmodene/civ4-debug-tools"
+Issues = "https://github.com/mattmodene/civ4-debug-tools/issues"
+
+[project.scripts]
+civ4dbg = "civ4dbg.__main__:run"
+
+[tool.setuptools]
+packages = ["civ4dbg"]
+
+[tool.pytest.ini_options]
+testpaths = ["tests"]
+pythonpath = ["."]
+
+[tool.ruff]
+target-version = "py311"
+line-length = 120
+# ingame/ is Python 2.4-compatible game code (its 2.4/3 common-subset is test-enforced); it is
+# not linted or formatted.
+extend-exclude = ["ingame"]
+
+[tool.ruff.lint]
+select = ["E", "F", "W", "I", "B", "UP"]
+ignore = [
+    # printf-style % formatting is the house style for the binary-format messages (hex widths,
+    # struct fields); rewriting ~40 call sites to f-strings buys nothing and risks the messages
+    # that tests pin verbatim.
+    "UP031",
+    # zip() is used over parallel lists of equal, parser-checked length; strict= adds noise.
+    "B905",
+]
+
+[tool.ruff.lint.per-file-ignores]
+# Test and tool scripts put the repository root on sys.path first and import after it.
+"tests/*" = ["E402"]
+"tools/*" = ["E402"]
+# These lambdas are handed to a helper that runs them synchronously inside the same loop
+# iteration, so late binding of the loop variable cannot occur.
+"tools/fuzz_inputs.py" = ["B023"]
+"tests/test_pe_reader.py" = ["B023"]

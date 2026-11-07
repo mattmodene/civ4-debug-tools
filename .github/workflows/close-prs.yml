@@ -1,0 +1,45 @@
+name: Close pull requests
+
+# This project does not accept pull requests (see CONTRIBUTING.md).
+# pull_request_target runs in the context of the base repository, so this workflow must never
+# check out, build or run code from the pull request, and must never interpolate pull request
+# fields (title, body, branch names) into a shell command. It does neither: it has no checkout
+# and no shell step, and the script below uses only the numeric pull request number.
+
+on:
+  pull_request_target:
+    types: [opened, reopened]
+
+permissions: {}
+
+jobs:
+  close:
+    runs-on: ubuntu-latest
+    permissions:
+      pull-requests: write
+    steps:
+      - name: Comment and close
+        uses: actions/github-script@v7
+        with:
+          script: |
+            const body = [
+              "Thank you for the interest, but this project does not accept pull requests or third-party code.",
+              "",
+              "The maintainer cannot review contributed code for this project safely and thoroughly, so every change is made by the maintainer. Issues are the way to propose a change: please open one describing what you would like changed and why.",
+              "",
+              "See [CONTRIBUTING.md](https://github.com/" + context.repo.owner + "/" + context.repo.repo + "/blob/main/CONTRIBUTING.md) for what is welcome (issues, discussions and validation reports).",
+              "",
+              "This pull request is being closed automatically.",
+            ].join("\n");
+            await github.rest.issues.createComment({
+              owner: context.repo.owner,
+              repo: context.repo.repo,
+              issue_number: context.payload.pull_request.number,
+              body,
+            });
+            await github.rest.pulls.update({
+              owner: context.repo.owner,
+              repo: context.repo.repo,
+              pull_number: context.payload.pull_request.number,
+              state: "closed",
+            });

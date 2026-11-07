@@ -1,0 +1,15 @@
+.ai-scratchpad/
+work/
+__pycache__/
+.pytest_cache/
+*.dmp
+*.pdb
+*.dll
+*.exe
+!tests/fixtures/small.pdb
+!tests/fixtures/small.dll
+.venv/
+dist/
+build/
+*.egg-info/
+.ruff_cache/
