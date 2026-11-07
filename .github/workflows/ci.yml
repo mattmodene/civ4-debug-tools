@@ -13,9 +13,6 @@ jobs:
   check:
     name: check (${{ matrix.os }}, python ${{ matrix.python-version }})
     runs-on: ${{ matrix.os }}
-    # Windows support is new and unproven: report it without blocking merges.
-    # make required once green on GitHub (owner decision 2026-11-07)
-    continue-on-error: ${{ matrix.os == 'windows-latest' }}
     strategy:
       fail-fast: false
       matrix:

@@ -16,19 +16,18 @@ Windows or macOS machine. This page records what that means for users. Statuses:
 | untested | Believed to work, not verified. |
 | unsupported | Known not to work, or deliberately out of scope. |
 
-"untested (CI pending)" means the platform is planned for the continuous-integration matrix
-(Windows first, as a non-blocking job until it is green, then required) and nothing has run yet.
-The Windows and macOS columns will be reconciled with the per-OS behavior of the code once CI is
-running.
+The full test suite runs in continuous integration on Linux, Windows and macOS, and all three
+must pass. On Windows and macOS that is the only thing that has run: no one has yet used the tools
+there against a real game, mod or minidump, which is what a validation report adds.
 
 ## Components by environment, for BUG-based mods
 
 | Component | Linux (game under Wine/Proton) | Windows | macOS |
 |---|---|---|---|
-| Offline PDB and minidump reader | tested | untested (CI pending) | untested (CI pending) |
-| CLI `resolve`, `dump`, `compare`, `info` | tested | untested (CI pending) | untested (CI pending) |
-| `civ4dbg exec` (AgentRepl client) | tested | untested (CI pending) | untested (CI pending) |
-| AgentRepl installer | tested | untested (CI pending) | untested (CI pending) |
+| Offline PDB and minidump reader | tested | CI only | CI only |
+| CLI `resolve`, `dump`, `compare`, `info` | tested | CI only | CI only |
+| `civ4dbg exec` (AgentRepl client) | tested | CI only | CI only |
+| AgentRepl installer | tested | CI only | CI only |
 | AgentRepl in the game | tested | untested | untested |
 
 The offline reader needs only Python 3.11 or newer and the files from the build under
@@ -39,8 +38,8 @@ one reason Windows stays "untested" until it is reviewed. The protection each OS
 
 ## Exchange-directory protection by OS
 
-What `civ4dbg exec` enforces for the exchange directory. Nothing here has been run on Windows or macOS;
-the Windows and macOS entries are read from the code and exercised on Linux with mocks.
+What `civ4dbg exec` enforces for the exchange directory. On Windows and macOS these are exercised only by
+the test suite in CI (and on Linux with mocks), never against a real game.
 
 | Protection | Linux | macOS | Windows |
 |---|---|---|---|
@@ -76,7 +75,7 @@ state directory (`$CIV4DBG_STATE_DIR`, else `$XDG_STATE_HOME/civ4dbg/agentrepl` 
 `~/.local/state/civ4dbg/agentrepl` on Linux, `~/Library/Application Support/civ4dbg/agentrepl` on macOS,
 `%LOCALAPPDATA%\civ4dbg\agentrepl` on Windows). On Linux and macOS the folders it creates are mode 0700.
 On Windows no mode is enforced: the folder only inherits the ACL of its parent, so it should stay inside
-the user's own profile. Only the Linux behavior has been run.
+the user's own profile. Only the Linux behavior has been run outside CI.
 
 ## Mod types
 

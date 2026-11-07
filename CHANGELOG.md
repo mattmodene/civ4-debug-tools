@@ -28,6 +28,9 @@ Standards deviations are recorded in `.standards-config.json` and printed by the
 - Test suite: portability fixes so it runs on Windows (a cross-platform watchdog replaces SIGALRM in the
   malformed-input tests; the macOS path-alias tests no longer need `os.getuid`; path-separator and
   command-line-length assumptions are gone). No product code changed.
+- CI: the Windows job is now required, like Linux and macOS.
+- Platform support: the Windows and macOS rows for the offline reader, CLI, `civ4dbg exec` and the
+  installer move from "untested (CI pending)" to "CI only".
 
 ## [0.1.0] - 2026-11-07
 
