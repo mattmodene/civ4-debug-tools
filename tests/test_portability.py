@@ -232,6 +232,11 @@ def _alias_tree(tmp_path, target="private/var"):
     return root
 
 
+@pytest.mark.skipif(
+    os.name == "nt",
+    reason="darwin-only code path; Windows os.readlink returns the target in another form, "
+    "so the simulated alias never matches",
+)
 def test_system_alias_is_resolved_when_root_owned(tmp_path, monkeypatch):
     root = _alias_tree(tmp_path)
     monkeypatch.setattr(remote, "_ROOT_UID", _fs_uid(tmp_path))  # stand-in for "owned by root"
