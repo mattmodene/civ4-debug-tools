@@ -212,11 +212,24 @@ def main() -> int:
     tallies.append(
         fuzz_minidump(
             build_thread_minidump(
-                [(0x400000, 0x100000, r"S:\game\x.exe"), dll_mod], threads, (792, 0x80000003, 0x7BE01004)
+                [(0x400000, 0x100000, r"S:\game\x.exe"), dll_mod], threads, (792, 0x80000003, 0x7BE01004), pid=4242
             ),
             args.cases,
             rnd,
             "synthetic hang minidump (ThreadList + break-in)",
+        )
+    )
+    tallies.append(
+        fuzz_minidump(
+            build_thread_minidump(
+                [(0x400000, 0x100000, r"S:\game\x.exe"), (*dll_mod, 0, (bytes(range(16)), 1))],
+                threads,
+                (336, 0xC0000005, 0x2C50000 + 0x1020),
+                pid=4242,
+            ),
+            args.cases,
+            rnd,
+            "synthetic crash minidump (ThreadList + MiscInfo)",
         )
     )
     tallies.append(

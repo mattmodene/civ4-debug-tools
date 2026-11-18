@@ -26,6 +26,9 @@
 - **[test_build_match_omap_exit_codes.py](./test_build_match_omap_exit_codes.py)** - Build-match check (dump vs DLL), OMAP refusal and the CLI exit codes
 - **[test_c11_lines.py](./test_c11_lines.py)** - C11 (old-style `sstSrcModule`) line tables, from the published layout
 - **[test_codeview_match.py](./test_codeview_match.py)** - PDB-to-DLL matching through the DLL's CodeView (RSDS) record: GUID and age only
+- **[test_compare_crash_thread.py](./test_compare_crash_thread.py)** - `compare --crash-thread` (exception threads matched by role), MiscInfo process id parsing, malformed exception/MiscInfo streams, the refusal-message hints
+- **[test_compare_contract.py](./test_compare_contract.py)** - `compare` exit-code and stdout/stderr contract as tables (3 and 4 dumps, outliers in every position), and the `--crash-thread` same-crash evidence rule (code, module+offset, differing bases and module identity)
+- **[test_compare_stream_robustness.py](./test_compare_stream_robustness.py)** - Damaged exception and MiscInfo streams (cuts, sizes, positions, overlaps, duplicate types) end in a clean documented exit code, sampled through a subprocess; `dump` output is unchanged by a MiscInfo stream
 - **[test_fixture_hygiene.py](./test_fixture_hygiene.py)** - The committed fixture must carry no host path and must be reproducible
 - **[test_fixture_pdb.py](./test_fixture_pdb.py)** - Known-good PDB written by LLVM's own linker (lld-link), checked against llvm-pdbutil
 - **[test_icf_and_return_addresses.py](./test_icf_and_return_addresses.py)** - Identical-code folding (several names, one address) and return-address lookups

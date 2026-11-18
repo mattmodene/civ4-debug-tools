@@ -1,8 +1,8 @@
 """Minimal Windows minidump reader for 32-bit (x86) crash dumps.
 
 Reads only the streams needed to name a crash site or a thread's position: the
-thread list (3), the module list (4), the memory list (5) and the exception
-stream (6). The x86 ``CONTEXT`` offsets
+thread list (3), the module list (4), the memory list (5), the exception
+stream (6) and the process id of the MiscInfo stream (15). The x86 ``CONTEXT`` offsets
 (the integer registers 0x9C-0xC4, see ``_CTX_X86_REGISTERS``) are hard-coded, so
 this reader targets x86 dumps.
 Standard library only.
@@ -23,6 +23,7 @@ STREAM_MODULE_LIST = 4
 STREAM_MEMORY_LIST = 5
 STREAM_EXCEPTION = 6
 STREAM_SYSTEM_INFO = 7
+STREAM_MISC_INFO = 15
 STREAM_MEMORY64_LIST = 9
 PROCESSOR_ARCHITECTURE_X86 = 0
 MAX_STREAMS = 0x1000  # a real dump has tens; more is treated as corrupt
@@ -73,6 +74,7 @@ class Module:
     name: str
     timestamp: int = 0  # TimeDateStamp of the module's PE file header, as recorded in the dump
     checksum: int = 0
+    cv_id: tuple[bytes, int] | None = None  # (GUID bytes, age) of the CodeView RSDS record, when the dump carries one
 
     @property
     def basename(self) -> str:
@@ -125,6 +127,7 @@ class CrashInfo:
     threads: list[ThreadInfo] = field(default_factory=list)  # ThreadList (empty when the dump has none)
     has_exception: bool = True  # False: no exception stream (a ThreadList-only snapshot)
     thread_list_error: str | None = None  # set when a crash dump's ThreadList was unusable and was skipped
+    process_id: int | None = None  # MiscInfo (stream 15) ProcessId when the stream is present and flags it valid
 
     @property
     def is_snapshot(self) -> bool:
@@ -211,7 +214,10 @@ def _parse(data: bytes) -> CrashInfo:
     modules = []
     for i in range(count):
         base, size, chk, ts, name_rva = struct.unpack_from("<QIIII", data, off + 4 + _MODULE_ENTRY_SIZE * i)
-        modules.append(Module(base, size, _utf16_string(data, name_rva), ts, chk))
+        cv_id = _module_cv_id(data, off + 4 + _MODULE_ENTRY_SIZE * i)
+        modules.append(Module(base, size, _utf16_string(data, name_rva), ts, chk, cv_id))
+
+    process_id = _parse_misc_info(data, streams[STREAM_MISC_INFO]) if STREAM_MISC_INFO in streams else None
 
     ranges = _memory_ranges(data, streams[STREAM_MEMORY_LIST][1])
     threads: list[ThreadInfo] = []
@@ -236,6 +242,7 @@ def _parse(data: bytes) -> CrashInfo:
             modules=modules,
             threads=threads,
             has_exception=False,
+            process_id=process_id,
         )
 
     _, off = streams[STREAM_EXCEPTION]
@@ -276,7 +283,36 @@ def _parse(data: bytes) -> CrashInfo:
         registers=registers,
         threads=threads,
         thread_list_error=thread_list_error,
+        process_id=process_id,
     )
+
+
+def _module_cv_id(data: bytes, entry: int) -> tuple[bytes, int] | None:
+    """(GUID, age) from a module entry's CvRecord when it is a well-formed RSDS record, else None.
+
+    Optional identity data: anything missing, short or outside the file yields None and never an error.
+    """
+    try:
+        cv_size, cv_rva = struct.unpack_from("<II", data, entry + 76)
+        if cv_size < 24 or cv_rva + 24 > len(data) or data[cv_rva : cv_rva + 4] != b"RSDS":
+            return None
+        return bytes(data[cv_rva + 4 : cv_rva + 20]), struct.unpack_from("<I", data, cv_rva + 20)[0]
+    except (struct.error, IndexError, OverflowError):
+        return None
+
+
+def _parse_misc_info(data: bytes, stream: tuple[int, int]) -> int | None:
+    """The ProcessId of a MiscInfo stream (15), or None when it is unavailable.
+
+    MINIDUMP_MISC_INFO starts with SizeOfInfo, Flags1 (bit 0: ProcessId valid) and ProcessId. The stream
+    is optional context: one that is too short, lies (even partly) outside the file or does not flag the
+    id valid yields None, and never an error, so a damaged MiscInfo cannot make any command fail.
+    """
+    size, off = stream
+    if size < 12 or off + 12 > len(data):
+        return None
+    _info_size, flags1, pid = struct.unpack_from("<III", data, off)
+    return pid if flags1 & 1 else None
 
 
 def _memory_ranges(data: bytes, off: int) -> list[tuple[int, int, int]]:

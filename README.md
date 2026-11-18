@@ -5,7 +5,7 @@ into function names, offsets and source lines, using the PDB the mod ships, and 
 running game through an opt-in Python console. LLVM's tools cannot read the old-style PDB of
 the mod this was written against, Caveman2Cosmos (see `docs/llvm-diagnosis.md`, a historical case study), so this
 reads PDBs directly. Standard library only.
-**Last Updated**: 2026-11-07
+**Last Updated**: 2026-11-17
 **Authors**: Matt Modene ([@mattmodene](https://github.com/mattmodene))
 
 Version 0.1.0 (see [CHANGELOG.md](./CHANGELOG.md)). Released under the MIT license.
@@ -111,6 +111,10 @@ Example paths below name files in the current directory; any path works.
     # several snapshots of one hang: functions that recur in a thread's stack scan
     python3 -I civ4dbg.py compare --pdb ... --dll ... hang-1.dmp hang-2.dmp hang-3.dmp
 
+    # crash dumps of one crash taken in separate runs (thread ids differ per run):
+    # match each dump's exception thread instead of a thread id
+    python3 -I civ4dbg.py compare --pdb ... --dll ... --crash-thread crash-run1.dmp crash-run2.dmp
+
     # container summary
     python3 -I civ4dbg.py info --pdb CvGameCoreDLL.pdb
 
@@ -119,17 +123,18 @@ Example paths below name files in the current directory; any path works.
 | Option | Commands | Meaning |
 |---|---|---|
 | `--pdb PATH` | all | the PDB (required) |
-| `--dll PATH` | all | the DLL. `resolve`/`info`: cross-check the PDB section table against the DLL's PE headers. `dump`: also enables the build-match check (below). Strongly recommended for `dump` |
-| `--module NAME` | `dump` | file name of the module to resolve, default `CvGameCoreDLL.dll`. Matched against the dump's module list by whole file name, case-insensitive, directories ignored (`Other` + `CvGameCoreDLL.dll` does not match) |
+| `--dll PATH` | all | the DLL. `resolve`/`info`: cross-check the PDB section table against the DLL's PE headers. `dump` and `compare`: also enable the build-match check (below). Strongly recommended for both |
+| `--module NAME` | `dump`, `compare` | file name of the module to resolve, default `CvGameCoreDLL.dll`. Matched against the dump's module list by whole file name, case-insensitive, directories ignored (`Other` + `CvGameCoreDLL.dll` does not match) |
 | `--stack-limit N` | `dump` | how many stack words (that point into the module) to look at, default 20, `0` for none. Applied before the adjacent-duplicate collapse, so fewer than N distinct lines may print; only *consecutive* repeats collapse |
 | `--thread TID` | `dump`, `compare` | `dump`: show this thread (decimal or `0x` hex; repeatable) instead of the default selection; an unknown id exits 2 and lists the ids. `compare`: compare this thread id only |
+| `--crash-thread` | `compare` | compare the exception (crashing) thread of every dump, whatever its thread id, as one logical thread (for crash dumps of one crash taken in separate runs). Every dump must be a crash dump with an exception record. Excludes `--thread` (usage error, exit 2) |
 | `--all-threads` | `dump` | show every thread in the ThreadList; a thread with no address in the module is one line. Excludes `--thread` |
 | `--min-dumps N` | `compare` | list a function only if it is in at least N dumps (default 2) |
 | `--top N` | `compare` | at most N functions per thread (default 30) |
 | `--return-address` | `resolve` | treat the given RVAs as return addresses (look up RVA-1) |
 | `--all-candidates` | `resolve`, `dump` | list every identical-code-folding candidate instead of the first 5 plus a count |
 | `--allow-pdb-mismatch` | all | continue when the PDB's GUID/age does not match the DLL's CodeView record |
-| `--allow-build-mismatch` | `dump` | print names even when the dump and DLL are different builds (loud warning) |
+| `--allow-build-mismatch` | `dump`, `compare` | print names even when the dump and DLL are different builds (loud warning) |
 
 ### Exit codes
 
@@ -137,7 +142,7 @@ Example paths below name files in the current directory; any path works.
 |---|---|
 | 0 | success |
 | 1 | an input file is unreadable or malformed (truncated minidump, corrupt PDB, zero-byte file, bad PE headers): one line `error: ...` on stderr |
-| 2 | usage error (bad option), the `--module` is not in the dump, or the `--thread` id is not in the dump (for `compare`: not in every dump, or no thread id common to all) |
+| 2 | usage error (bad option), the `--module` is not in the dump, or the `--thread` id is not in the dump (for `compare`: not in every dump, no thread id common to all, no thread that carries addresses in the module is common to all the dumps, which is typical for dumps from separate runs of the process, the `--thread` id has no address in the module in any dump, or with `--crash-thread` a dump has no exception record or only a breakpoint exception, which is taken for a debugger break-in) |
 | 3 | build mismatch: the minidump's module record disagrees with the DLL, or the PDB does not match the DLL (GUID or age rule, or no GUID and different section tables) |
 | 4 | input is well formed but unsupported: a PDB with OMAP streams, a non-x86 dump, a Memory64-only dump |
 | 5 | internal error: an unexpected exception type escaped on malformed input (a bug; please report) |
@@ -256,6 +261,46 @@ hits. Names that share one body (identical-code folding) are listed together as 
 The result is a ranking of **scan candidates**, not an unwind: a function high on the list
 recurs in the stack words, which can include stale residue, and the list says nothing
 about call order or whether the function was running.
+
+`compare` matches threads **by id only**, and thread ids are per process instance. Dumps taken from
+separate runs of the process (typically crash dumps of the same crash) therefore usually share the idle
+threads' ids but not the id of the thread running the module's code. When no thread carrying addresses in
+the module is common to all the dumps, `compare` exits 2 with a message that lists, per dump, the ids of
+the module-carrying threads that are not present in every dump (at most 10 per dump, then "... and N more"),
+says the dumps come from different processes when their MiscInfo process ids are all present and differ
+(otherwise, including when a dump's MiscInfo is absent or unusable, that this is typical of separate runs), suggests `--crash-thread` when every dump has an exception
+record, and points at `civ4dbg dump` to inspect each dump on its own. When at least one such thread is common
+and ranked, the others are left out and one `#` line names them. When no dump has any thread with an address
+in the module, `compare` still exits 0 and says so in one `#` line. `--thread TID` compares that id as given:
+it exits 2 if the id is absent from a dump, and exits 2 if the thread has no address in the module in any
+dump. Successive dumps of one running process (a hang) keep their ids and compare as before.
+
+**`--crash-thread`** matches by role instead: it takes each dump's exception (crashing) thread, whatever its
+id, and ranks the functions over those threads exactly as above. Every dump must be a crash dump: a dump with
+no exception record exits 2 and names the dump, and so does one whose only exception is a breakpoint
+(0x80000003 or the WOW64 0x4000001F), which is taken for a debugger break-in; a genuine breakpoint or assert
+crash is refused too, and `civ4dbg dump` shows its record. It prints one header line per dump (exception
+code, faulting address as module+offset with the function the PDB gives, thread id, and the process id from
+the MiscInfo stream when the dump has a usable one) and the ranking, then an `# evidence:` line that states,
+without a verdict beyond it:
+
+- whether the exception code is identical in all dumps;
+- whether the faulting module+offset is identical (a fault address in no listed module is reported as
+  *not comparable* as module+offset, even when the raw addresses are equal);
+- whether the faulting module is the same build in all dumps, judged from the dumps' own module lists
+  (name, timestamp, size, and the CodeView GUID and age where the dumps carry one), with or without `--dll`. Where a dump has no CodeView record the comparison rests on timestamp and size for
+  that dump, and a separate `#` line says so (a missing id is unknown, never a difference);
+- how many leading scan frames resolve to the same function in all dumps.
+
+"consistent with the same crash" is printed only when the code and the module+offset are identical and the
+faulting module is not a different build. With three or more dumps, a further `#` line names the dumps that
+differ from the most common value. How the evidence is derived, and its limits: the exception thread's
+frames come from its ThreadList entry (the exception record's own context only when the thread is not listed),
+and the two are not cross-checked; frames are compared position by position (the exact-eip function first,
+when eip is in the module, then the stack words), so the count is a scan signal and never an unwind. Agreeing
+frames do not establish an identical root cause.
+
+    python3 -I civ4dbg.py compare --pdb CvGameCoreDLL.pdb --dll CvGameCoreDLL.dll --crash-thread crash-run1.dmp crash-run2.dmp
 
 ### Taking the dumps under Proton
 

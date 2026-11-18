@@ -314,6 +314,8 @@ def build_thread_minidump(
     modules: list[tuple],
     threads: list[dict],
     exception: tuple | None = None,
+    pid: int | None = None,
+    misc_info: bytes | None = None,
 ) -> bytes:
     """A synthetic x86 minidump with a ThreadList (3), module list (4), memory list (5).
 
@@ -322,8 +324,12 @@ def build_thread_minidump(
     (0x10 zero bytes below esp, then the words), also listed in the MemoryList.
     ``exception`` is ``None`` (no stream 6, a ThreadList-only snapshot) or
     ``(tid, code, address)``; its context is that thread's.
+    ``pid`` adds a MiscInfo stream (15, 24 bytes, ProcessId valid); ``misc_info`` is raw MiscInfo
+    bytes instead (for malformed-stream tests).
     """
-    n_streams = 3 + (exception is not None)
+    if pid is not None and misc_info is None:
+        misc_info = struct.pack("<IIIIII", 24, 1, pid, 0, 0, 0)
+    n_streams = 3 + (exception is not None) + (misc_info is not None)
     dir_rva = 32
     mod_rva = dir_rva + 12 * n_streams
     mod_size = 4 + 108 * len(modules)
@@ -333,7 +339,9 @@ def build_thread_minidump(
     mem_size = 4 + 16 * len(threads)
     exc_rva = mem_rva + mem_size
     exc_size = 8 + 152 + 8 if exception is not None else 0
-    blob_rva = exc_rva + exc_size
+    misc_rva = exc_rva + exc_size
+    misc_size = len(misc_info) if misc_info is not None else 0
+    blob_rva = misc_rva + misc_size
     blobs = bytearray()
     ctx_locs, stack_locs, stack_ranges = {}, {}, {}
     for i, t in enumerate(threads):
@@ -357,16 +365,30 @@ def build_thread_minidump(
         name_offs.append(cur)
         cur += len(blob)
         blobs += blob
+    # optional 5th module item: (guid16, age), written as a CodeView RSDS record
+    cv_locs = []
+    for mod in modules:
+        if len(mod) > 4 and mod[4] is not None:
+            guid, age = mod[4]
+            blob = b"RSDS" + guid + struct.pack("<I", age) + b"x.pdb\0"
+            cv_locs.append((len(blob), cur))
+            cur += len(blob)
+            blobs += blob
+        else:
+            cv_locs.append((0, 0))
     out = struct.pack("<4sIIII", b"MDMP", 0xA793, n_streams, dir_rva, 0).ljust(32, b"\0")
     out += struct.pack("<III", 4, mod_size, mod_rva)
     out += struct.pack("<III", 3, thr_size, thr_rva)
     out += struct.pack("<III", 5, mem_size, mem_rva)
     if exception is not None:
         out += struct.pack("<III", 6, exc_size, exc_rva)
+    if misc_info is not None:
+        out += struct.pack("<III", 15, misc_size, misc_rva)
     mods = struct.pack("<I", len(modules))
-    for mod, no in zip(modules, name_offs):
+    for mod, no, cv in zip(modules, name_offs, cv_locs):
         ts = mod[3] if len(mod) > 3 else 0
-        mods += struct.pack("<QIIII", mod[0], mod[1], 0, ts, no).ljust(108, b"\0")
+        entry = struct.pack("<QIIII", mod[0], mod[1], 0, ts, no).ljust(76, b"\0") + struct.pack("<II", *cv)
+        mods += entry.ljust(108, b"\0")
     out += mods
     out += struct.pack("<I", len(threads))
     for i, t in enumerate(threads):
@@ -396,6 +418,8 @@ def build_thread_minidump(
         exc += struct.pack("<II", *ctx_locs[idx])
         assert len(exc) == exc_size
         out += exc
+    if misc_info is not None:
+        out += misc_info
     return out + bytes(blobs)
 
 

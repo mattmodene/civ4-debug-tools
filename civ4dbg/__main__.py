@@ -11,6 +11,7 @@ from __future__ import annotations
 import argparse
 import struct
 import sys
+from collections.abc import Callable
 
 from . import compare, minidump, remote
 from .buildcheck import build_mismatches, pdb_age_note, pdb_mismatches
@@ -297,6 +298,8 @@ def _cmd_compare(args: argparse.Namespace) -> int:
             print(f"module {args.module} not found in dump {p}", file=sys.stderr)
             return EXIT_NOT_FOUND
         targets.append(m)
+    if args.crash_thread:
+        return _compare_crash_threads(args, infos, targets)
     if args.thread is not None:
         tids = [args.thread]
         for p, info in zip(args.dumps, infos):
@@ -306,10 +309,7 @@ def _cmd_compare(args: argparse.Namespace) -> int:
         tids = [t.thread_id for t in infos[0].threads if all(i.thread(t.thread_id) for i in infos[1:])]
         if not tids:
             raise ThreadNotFoundError("no thread id is present in every dump (do the dumps have a ThreadList?)")
-    labels = []
-    for p in args.dumps:
-        base = p.replace("\\", "/").rsplit("/", 1)[-1]
-        labels.append(base)
+    labels = _dump_labels(args.dumps)
     pdb, pe = _open_pdb(args.pdb, args.dll, allow_pdb_mismatch=args.allow_pdb_mismatch)
     with pdb:
         for m in targets:
@@ -332,6 +332,13 @@ def _cmd_compare(args: argparse.Namespace) -> int:
             "(looked up at address - 1). NOT an unwind; stale stack residue is possible."
         )
         shown = idle = 0
+        # Threads carrying module addresses whose id is not in every dump: never compared by id.
+        unmatched: list[list[int]] = []
+        if args.thread is None:
+            unmatched = [
+                [t.thread_id for t in info.threads if t.thread_id not in tids and _carries_module_addresses(t, m)]
+                for info, m in zip(infos, targets)
+            ]
         for tid in tids:
             per_dump = []
             for info, m in zip(infos, targets):
@@ -353,9 +360,305 @@ def _cmd_compare(args: argparse.Namespace) -> int:
                 print(compare.format_recurring(rec, n))
             if len(ranked) > args.top:
                 print(f"  ... {len(ranked) - args.top} more (see --top)")
-        if idle:
+        if args.thread is not None and not shown:
+            raise ThreadNotFoundError(
+                f"thread {args.thread} has no address in {args.module} in any of the {n} dumps, so nothing was "
+                "compared; run `civ4dbg dump --thread` on a dump to see where that thread was"
+            )
+        if any(unmatched):
+            if not shown:
+                raise ThreadNotFoundError(_no_common_module_thread_message(args.module, labels, unmatched, infos))
+            print(
+                f"# thread(s) with addresses in {args.module} that are not in every dump were left out: "
+                + _format_unmatched(labels, unmatched)
+            )
+        if idle and not shown:
+            print(f"# none of the {n} dumps has a thread with an address in {args.module}")
+        elif idle:
             print(f"# {idle} thread(s) had no address in {args.module} in any dump")
     return EXIT_OK
+
+
+def _dump_labels(paths: list[str]) -> list[str]:
+    return [p.replace("\\", "/").rsplit("/", 1)[-1] for p in paths]
+
+
+def _has_crash_thread(info: minidump.CrashInfo) -> bool:
+    """True when the dump records a real exception (not a debugger break-in) and so names a crashing thread."""
+    return info.has_exception and not info.is_snapshot
+
+
+def _crash_thread_evidence(info: minidump.CrashInfo, m: minidump.Module) -> tuple[int | None, list[int]]:
+    """(eip RVA if in the module, module stack RVAs) for the exception thread of one dump.
+
+    Uses the ThreadList entry of the exception thread when there is one, else the exception record's
+    own context and stack. When both exist they are two captures of the same thread (the record's context
+    is the thread's at the fault); this deliberately prefers the ThreadList entry, as ``compare`` does for
+    every other thread, so the stack words come from one source for all threads. The two are not
+    cross-checked, and the choice is not shown in the output.
+    """
+    t = info.thread(info.thread_id)
+    if t is not None:
+        eip, stack = t.eip, minidump.thread_stack_rvas(t, m, limit=None)
+    else:
+        eip, stack = info.eip, minidump.stack_rvas(info, m, limit=None)
+    return (eip - m.base if m.contains(eip) else None), stack
+
+
+def _frame_keys(
+    resolve: Callable[[int, AddressKind], Resolution], evidence: tuple[int | None, list[int]]
+) -> list[tuple[str, ...] | None]:
+    """The scan's leading-to-trailing frames as function-name keys (None: no function covers it).
+
+    Frames are the exact-eip function (only when eip is in the module) followed by the module stack words in
+    stack order with consecutive repeats collapsed. They are positional scan candidates, not an unwind, so
+    the agreement count compares position by position and can pair an eip frame with a return-address frame.
+    """
+    eip, stack = evidence
+    frames: list[tuple[str, ...] | None] = []
+    seen: list[int] = []
+    if eip is not None:
+        frames.append(_key(resolve(eip, AddressKind.EXACT)))
+    for rva in stack:
+        if rva in seen[-1:]:
+            continue
+        seen.append(rva)
+        frames.append(_key(resolve(rva, AddressKind.RETURN_ADDRESS)))
+    return frames
+
+
+def _key(res: Resolution) -> tuple[str, ...] | None:
+    return tuple(sorted({c.name for c in res.candidates})) or None
+
+
+def _leading_agreement(per_dump: list[list[tuple[str, ...] | None]]) -> int:
+    """How many leading frames name the same function in every dump (stops at the first difference or gap).
+
+    A limited signal: stale stack residue, identical-code folding (equal candidate sets only) and the
+    positional pairing noted in :func:`_frame_keys` all bear on it. It never proves a common root cause.
+    """
+    n = 0
+    for frames in zip(*per_dump):
+        if frames[0] is None or any(f != frames[0] for f in frames):
+            break
+        n += 1
+    return n
+
+
+def _compare_crash_threads(args: argparse.Namespace, infos: list[minidump.CrashInfo], targets: list) -> int:
+    """``compare --crash-thread``: the exception thread of every dump, matched by role and not by id."""
+    labels = _dump_labels(args.dumps)
+    for lab, info in zip(labels, infos):
+        if not _has_crash_thread(info):
+            if not info.has_exception:
+                why = "has no exception record"
+            else:
+                why = (
+                    f"records only a breakpoint exception ({info.exception_code:#x}), which is taken for a debugger "
+                    "break-in; a genuine breakpoint or assert crash is refused too, and `civ4dbg dump` shows the record"
+                )
+            raise ThreadNotFoundError(
+                f"--crash-thread needs a crash dump with an exception record in every dump, but {lab} {why}"
+            )
+    pdb, pe = _open_pdb(args.pdb, args.dll, allow_pdb_mismatch=args.allow_pdb_mismatch)
+    with pdb:
+        for m in targets:
+            _check_build(m, pe, args.allow_build_mismatch)
+        cache: dict[tuple[int, AddressKind], Resolution] = {}
+
+        def resolve(rva: int, kind: AddressKind) -> Resolution:
+            key = (rva, kind)
+            if key not in cache:
+                cache[key] = pdb.resolve(rva, kind)
+            return cache[key]
+
+        n = len(infos)
+        min_dumps = min(args.min_dumps, n)
+        print(f"== compare: {n} dumps, module {args.module}, exception threads matched by role (not by thread id) ==")
+        faults: list[tuple[int, tuple]] = []
+        idents: list[tuple | None] = []  # build identity of the faulting module, None when the fault is in none
+        for i, (lab, info, m) in enumerate(zip(labels, infos, targets)):
+            addr = info.exception_address
+            fault_mod = info.module_at(addr)
+            if fault_mod is None:
+                where = f"{addr:#x} (in no listed module)"
+                fault_key: tuple = ("raw", addr)
+                idents.append(None)
+            else:
+                where = f"{fault_mod.basename}+{addr - fault_mod.base:#x}"
+                fault_key = ("module", fault_mod.basename.lower(), addr - fault_mod.base)
+                idents.append((fault_mod.basename.lower(), fault_mod.timestamp, fault_mod.size, fault_mod.cv_id))
+            if fault_mod is m:
+                res = resolve(addr - m.base, AddressKind.EXACT)
+                if res.function:
+                    where += f" ({res.function})"
+                elif res.candidates:
+                    where += f" ({len(res.candidates)} candidate functions, identical code folding)"
+            faults.append((info.exception_code, fault_key))
+            pid = f", process {info.process_id}" if info.process_id is not None else ""
+            print(f"  [{i}] {lab}: exception {info.exception_code:#x} at {where}, thread {info.thread_id}{pid}")
+        print(
+            "# scan candidates: eip (exact) and stack words that look like return addresses "
+            "(looked up at address - 1). NOT an unwind; stale stack residue is possible."
+        )
+        evidence = [_crash_thread_evidence(info, m) for info, m in zip(infos, targets)]
+        ranked, unresolved = compare.rank_recurring(resolve, evidence, min_dumps=min_dumps)
+        print(
+            f"== exception threads: {len(ranked)} functions in at least {min_dumps} of {n} dumps"
+            f" ({unresolved} words resolved to no function) =="
+        )
+        for rec in ranked[: args.top]:
+            print(compare.format_recurring(rec, n))
+        if len(ranked) > args.top:
+            print(f"  ... {len(ranked) - args.top} more (see --top)")
+        if not any(e is not None or r for e, r in evidence):
+            print(f"# no exception thread has an address in {args.module}")
+        same_code = len({c for c, _ in faults}) == 1
+        same_site = len({k for _, k in faults}) == 1
+        outside = [i for i, (_, k) in enumerate(faults) if k[0] == "raw"]
+        agree = _leading_agreement([_frame_keys(resolve, ev) for ev in evidence])
+        # The faulting module's build is compared across the dumps themselves (name, TimeDateStamp, SizeOfImage,
+        # and the CodeView GUID/age where the dumps carry one), with or without --dll: module+offset from two
+        # different builds is not comparable. A missing CodeView record is unknown, not a difference.
+        builds_same: bool | None = None
+        if all(x is not None for x in idents) and len({x[0] for x in idents}) == 1:
+            cvs = {x[3] for x in idents if x[3] is not None}
+            builds_same = len({(x[1], x[2]) for x in idents}) == 1 and len(cvs) <= 1
+        code_txt = (
+            f"identical ({faults[0][0]:#x})"
+            if same_code
+            else "DIFFERS (" + ", ".join(f"{c:#x}" for c in dict.fromkeys(c for c, _ in faults)) + ")"
+        )
+        if outside and same_site:
+            site_txt = (
+                "not comparable (the fault address is in no listed module in any dump; the raw addresses are equal)"
+            )
+        else:
+            site_txt = "identical" if same_site else "DIFFERS"
+        n_no_cv = sum(1 for x in idents if x is not None and x[3] is None)
+        build_txt = (
+            ""
+            if builds_same is None
+            else ("; faulting module build identical" if builds_same else "; faulting module builds DIFFER")
+        )
+        print(
+            f"# evidence: exception code {code_txt}; faulting module+offset {site_txt}{build_txt}; "
+            f"{agree} leading scan frame(s) resolve to the same function in all {n} dumps."
+        )
+        if builds_same is not None and n_no_cv:
+            print(
+                "# the module build comparison rests on timestamp and size"
+                + (" only" if n_no_cv == n else ", plus the CodeView id where available")
+                + f"; the CodeView id is unavailable in {n_no_cv} of {n} dump(s)."
+            )
+        if not (same_code and same_site):
+            print(
+                "# the dumps differ in exception code or faulting module+offset: do not treat them as the same crash."
+            )
+        elif outside:
+            print(
+                "# the fault address is in no listed module, so it is not comparable as module+offset; "
+                "nothing is said about whether this is the same crash."
+            )
+        elif builds_same is False:
+            print(
+                "# the faulting module is a different build in some dumps (timestamp, size or signature differ), "
+                "so module+offset is not comparable; nothing is said about whether this is the same crash."
+            )
+        else:
+            print(
+                "# the dumps agree on exception code and faulting module+offset, consistent with the same crash. "
+                "Agreeing frames are scan candidates, not an unwind, and do not establish an identical root cause."
+            )
+        # With three or more dumps, say which ones are the odd ones out (against the most common value).
+        odd = []
+        for what, values, differs in (
+            ("exception code", [c for c, _ in faults], not same_code),
+            ("module+offset", [k for _, k in faults], not same_site),
+            ("module build", _build_keys(idents), builds_same is False),
+        ):
+            if differs:
+                odd.append(f"{what} in {_name_dumps(_outliers(values), labels)}")
+        if odd and n > 2:
+            print("# differs from the most common value (the first dump's on a tie): " + "; ".join(odd))
+    return EXIT_OK
+
+
+def _build_keys(idents: list) -> list:
+    """Per-dump build keys for the outlier line, by the same rule as the build check: a missing CodeView id
+    is unknown, not a difference, so it takes the most common id that is present (the earliest on a tie)."""
+    present = [x[3] for x in idents if x is not None and x[3] is not None]
+    fill = max(present, key=present.count) if present else None
+    return [None if x is None else (x[0], x[1], x[2], x[3] if x[3] is not None else fill) for x in idents]
+
+
+def _outliers(values: list) -> list[int]:
+    """Indices of the entries that differ from the most common value (the earliest value on a tie)."""
+    counts: dict = {}
+    for v in values:
+        counts[repr(v)] = counts.get(repr(v), 0) + 1
+    best = max(counts.values())
+    ref = next(repr(v) for v in values if counts[repr(v)] == best)
+    return [i for i, v in enumerate(values) if repr(v) != ref]
+
+
+def _name_dumps(indices: list[int], labels: list[str], cap: int = 5) -> str:
+    text = ", ".join(f"[{i}] {labels[i]}" for i in indices[:cap])
+    if len(indices) > cap:
+        text += f", ... and {len(indices) - cap} more"
+    return text
+
+
+def _carries_module_addresses(thread: minidump.ThreadInfo, module: minidump.Module) -> bool:
+    return module.contains(thread.eip) or bool(minidump.thread_stack_rvas(thread, module, limit=None))
+
+
+_UNMATCHED_ID_CAP = 10
+
+
+def _format_ids(tids: list[int]) -> str:
+    text = ", ".join(str(t) for t in tids[:_UNMATCHED_ID_CAP])
+    if len(tids) > _UNMATCHED_ID_CAP:
+        text += f", ... and {len(tids) - _UNMATCHED_ID_CAP} more"
+    return text
+
+
+def _format_unmatched(labels: list[str], unmatched: list[list[int]]) -> str:
+    return "; ".join(
+        f"[{i}] {lab}: {_format_ids(tids)}" for i, (lab, tids) in enumerate(zip(labels, unmatched)) if tids
+    )
+
+
+def _no_common_module_thread_message(
+    module: str, labels: list[str], unmatched: list[list[int]], infos: list[minidump.CrashInfo]
+) -> str:
+    pids = [info.process_id for info in infos]
+    if all(p is not None for p in pids) and len(set(pids)) > 1:
+        cause = (
+            "the dumps come from different processes (process ids "
+            + "; ".join(f"[{i}] {lab}: {p}" for i, (lab, p) in enumerate(zip(labels, pids)))
+            + "), and thread ids differ per process; compare matches threads by id only.\n"
+        )
+    else:
+        cause = (
+            "this is typical when the dumps were taken from separate runs of the process, because thread ids "
+            "differ per run; compare matches threads by id only.\n"
+        )
+    hint = ""
+    if all(_has_crash_thread(info) for info in infos):
+        hint = (
+            "every dump has an exception record: to compare the exception (crashing) thread of each dump "
+            "regardless of thread id, rerun with --crash-thread.\n"
+        )
+    return (
+        f"no thread carrying addresses in {module} is common to all the dumps, so nothing was compared.\n"
+        f"threads with {module} addresses that are not present in every dump (thread ids): "
+        + _format_unmatched(labels, unmatched)
+        + "\n"
+        + cause
+        + hint
+        + "run `civ4dbg dump` on each dump to inspect it on its own."
+    )
 
 
 def _cmd_info(args: argparse.Namespace) -> int:
@@ -457,11 +760,18 @@ def main(argv: list[str] | None = None) -> int:
         default="CvGameCoreDLL.dll",
         help="file name of the module to resolve (case-insensitive, whole name)",
     )
-    c.add_argument(
+    which = c.add_mutually_exclusive_group()
+    which.add_argument(
         "--thread",
         type=_nonneg,
         metavar="TID",
         help="compare this thread id only; default: every thread id present in all the dumps",
+    )
+    which.add_argument(
+        "--crash-thread",
+        action="store_true",
+        help="compare the exception (crashing) thread of each crash dump, whatever its thread id "
+        "(for dumps of one crash taken in separate runs); cannot be combined with --thread",
     )
     c.add_argument(
         "--min-dumps", type=_pos, default=2, help="list only functions seen in at least this many dumps (default 2)"

@@ -208,6 +208,196 @@ def test_compare_reports_idle_threads_in_one_line(tmp_path, capsys):
     assert rc == EXIT_OK and "2 thread(s) had no address in CvGameCoreDLL.dll in any dump" in out
 
 
+def _separate_runs_crash(crash_tid, eip=BASE + 0x1020):
+    """A crash dump of one run: the crashing thread plus two idle threads.
+
+    Thread ids are per process instance, so two runs of the same crash give the
+    crashing thread different ids while the idle threads can keep the same ones.
+    """
+    threads = [
+        {"tid": crash_tid, "eip": eip, "stack_words": [ret(0x1071), ret(0x1011)]},
+        {"tid": 480, "eip": NT, "stack_words": [0x1, 0x2, NT]},
+        {"tid": 484, "eip": NT + 4, "stack_words": [NT]},
+    ]
+    return snap(threads, (crash_tid, 0xC0000005, eip))
+
+
+def test_compare_of_crash_dumps_whose_module_threads_share_no_id_does_not_report_success(tmp_path, capsys):
+    # Same crash, two runs: the thread in the module is 340 in one and 344 in the other. Thread ids 480
+    # and 484 are common to both dumps, so the "no thread id common to all" exit (2) does not fire, but
+    # every common thread is idle: no thread carrying module addresses could be matched, so nothing was
+    # compared. The command must not exit 0 as if it had produced a ranking.
+    a = write(tmp_path, "a.dmp", _separate_runs_crash(340))
+    b = write(tmp_path, "b.dmp", _separate_runs_crash(344))
+    rc, out, err = run(capsys, "compare", "--pdb", PDB, "--dll", DLL, a, b)
+    assert rc != EXIT_OK, f"compare exited 0 having compared nothing; stdout was:\n{out}"
+    assert err.strip(), "a failed comparison must say why on stderr"
+
+
+def test_compare_of_hang_dumps_whose_module_thread_id_is_not_in_every_dump_does_not_report_success(tmp_path, capsys):
+    # The same rule for snapshot dumps: the game thread is 336 in the first dump and 340 in the second,
+    # the idle thread 480 is in both. Nothing carrying module addresses can be matched.
+    a = write(tmp_path, "a.dmp", hang([ret(0x1071)], with_exception=False))
+    other = [
+        {"tid": 340, "eip": BASE + 0x1020, "stack_words": [ret(0x1071)]},
+        {"tid": 480, "eip": NT, "stack_words": [0x1, 0x2, NT]},
+    ]
+    b = write(tmp_path, "b.dmp", snap(other))
+    rc, out, err = run(capsys, "compare", "--pdb", PDB, "--dll", DLL, a, b)
+    assert rc != EXIT_OK, f"compare exited 0 having compared nothing; stdout was:\n{out}"
+    assert err.strip(), "a failed comparison must say why on stderr"
+
+
+def test_compare_of_crash_dumps_with_the_same_module_thread_id_still_ranks(tmp_path, capsys):
+    # Guard against over-correcting: when the module thread's id IS common, the ranking is produced.
+    a = write(tmp_path, "a.dmp", _separate_runs_crash(340))
+    b = write(tmp_path, "b.dmp", _separate_runs_crash(340))
+    rc, out, _ = run(capsys, "compare", "--pdb", PDB, "--dll", DLL, a, b)
+    assert rc == EXIT_OK and "== thread 340 " in out and "mainfn" in out
+
+
+def test_compare_refusal_is_exactly_exit_2_and_names_the_unmatched_threads_per_dump(tmp_path, capsys):
+    a = write(tmp_path, "a.dmp", _separate_runs_crash(340))
+    b = write(tmp_path, "b.dmp", _separate_runs_crash(344))
+    rc, out, err = run(capsys, "compare", "--pdb", PDB, "--dll", DLL, a, b)
+    assert rc == EXIT_NOT_FOUND == 2
+    assert ("error: no thread carrying addresses in CvGameCoreDLL.dll is common to all the dumps") in err
+    assert "[0] a.dmp: 340; [1] b.dmp: 344" in err
+    assert "not present in every dump" in err and "typical when" in err and "separate runs" in err
+    assert "civ4dbg dump" in err
+    # Nothing on stdout may suggest a result: no ranking, no thread header, no idle-count line.
+    assert "== thread" not in out and "thread(s) had no address" not in out
+
+
+def test_compare_refusal_lists_only_module_threads_not_idle_ones(tmp_path, capsys):
+    a = write(tmp_path, "a.dmp", _separate_runs_crash(340))
+    b = write(tmp_path, "b.dmp", _separate_runs_crash(344))
+    _, _, err = run(capsys, "compare", "--pdb", PDB, "--dll", DLL, a, b)
+    assert "480" not in err and "484" not in err
+
+
+def _two_module_threads(common_tid, extra_tid):
+    threads = [
+        {"tid": common_tid, "eip": BASE + 0x1020, "stack_words": [ret(0x1071), ret(0x1011)]},
+        {"tid": extra_tid, "eip": BASE + 0x1020, "stack_words": [ret(0x1071)]},
+        {"tid": 480, "eip": NT, "stack_words": [0x1, NT]},
+    ]
+    return snap(threads, (common_tid, 0xC0000005, BASE + 0x1020))
+
+
+def test_compare_with_one_common_module_thread_ranks_it_and_notes_the_left_out_ones(tmp_path, capsys):
+    a = write(tmp_path, "a.dmp", _two_module_threads(340, 350))
+    b = write(tmp_path, "b.dmp", _two_module_threads(340, 354))
+    rc, out, err = run(capsys, "compare", "--pdb", PDB, "--dll", DLL, a, b)
+    assert rc == EXIT_OK and "== thread 340 " in out and "mainfn" in out
+    assert (
+        "# thread(s) with addresses in CvGameCoreDLL.dll that are not in every dump were left out: "
+        "[0] a.dmp: 350; [1] b.dmp: 354"
+    ) in out
+    assert "== thread 350" not in out and "== thread 354" not in out
+
+
+def test_compare_with_every_module_thread_common_prints_no_left_out_note(tmp_path, capsys):
+    a = write(tmp_path, "a.dmp", _separate_runs_crash(340))
+    b = write(tmp_path, "b.dmp", _separate_runs_crash(340))
+    _, out, _ = run(capsys, "compare", "--pdb", PDB, "--dll", DLL, a, b)
+    assert "were left out" not in out
+
+
+def test_compare_with_no_module_thread_in_any_dump_keeps_exit_0_and_the_idle_line(tmp_path, capsys):
+    idle = [{"tid": 480, "eip": NT, "stack_words": [0x1, NT]}]
+    a = write(tmp_path, "a.dmp", snap(idle))
+    b = write(tmp_path, "b.dmp", snap(idle))
+    rc, out, _ = run(capsys, "compare", "--pdb", PDB, "--dll", DLL, a, b)
+    assert rc == EXIT_OK and "# none of the 2 dumps has a thread with an address in CvGameCoreDLL.dll" in out
+    assert "thread(s) had no address" not in out
+
+
+def _mod_thread(tid, eip=BASE + 0x1020, words=(0x1071,)):
+    return {"tid": tid, "eip": eip, "stack_words": [ret(w) for w in words]}
+
+
+def test_compare_three_dumps_thread_in_two_of_three_is_refused_and_named_in_each_dump_that_has_it(tmp_path, capsys):
+    idle = {"tid": 480, "eip": NT, "stack_words": [NT]}
+    a = write(tmp_path, "a.dmp", snap([_mod_thread(340), idle]))
+    b = write(tmp_path, "b.dmp", snap([_mod_thread(344), idle]))
+    c = write(tmp_path, "c.dmp", snap([_mod_thread(340), idle]))
+    rc, out, err = run(capsys, "compare", "--pdb", PDB, "--dll", DLL, a, b, c)
+    assert rc == EXIT_NOT_FOUND
+    assert "[0] a.dmp: 340; [1] b.dmp: 344; [2] c.dmp: 340" in err
+    assert "not present in every dump" in err and "no counterpart" not in err
+    assert "== thread" not in out
+
+
+def test_compare_caps_a_long_unmatched_id_list_and_states_the_remainder(tmp_path, capsys):
+    idle = {"tid": 480, "eip": NT, "stack_words": [NT]}
+    a = write(tmp_path, "a.dmp", snap([_mod_thread(1000 + i) for i in range(25)] + [idle]))
+    b = write(tmp_path, "b.dmp", snap([_mod_thread(344), idle]))
+    rc, _, err = run(capsys, "compare", "--pdb", PDB, "--dll", DLL, a, b)
+    assert rc == EXIT_NOT_FOUND
+    assert "1009, ... and 15 more" in err and "1010" not in err and "[1] b.dmp: 344" in err
+
+
+def test_compare_note_caps_a_long_left_out_list_too(tmp_path, capsys):
+    extra = [_mod_thread(1000 + i) for i in range(12)]
+    a = write(tmp_path, "a.dmp", snap([_mod_thread(340)] + extra))
+    b = write(tmp_path, "b.dmp", snap([_mod_thread(340)]))
+    rc, out, _ = run(capsys, "compare", "--pdb", PDB, "--dll", DLL, a, b)
+    assert rc == EXIT_OK and "[0] a.dmp: 1000," in out and "1009, ... and 2 more" in out
+
+
+def test_compare_thread_option_naming_a_module_thread_ignores_unmatched_ones(tmp_path, capsys):
+    # --thread is exempt from the refusal and the left-out note: the named id is compared as given.
+    a = write(tmp_path, "a.dmp", snap([_mod_thread(340), _mod_thread(350)]))
+    b = write(tmp_path, "b.dmp", snap([_mod_thread(340), _mod_thread(354)]))
+    rc, out, err = run(capsys, "compare", "--pdb", PDB, "--dll", DLL, "--thread", "340", a, b)
+    assert rc == EXIT_OK and "== thread 340 " in out
+    assert "were left out" not in out and "not present in every dump" not in err
+
+
+def test_compare_thread_option_naming_a_thread_idle_in_every_dump_is_refused(tmp_path, capsys):
+    idle = {"tid": 480, "eip": NT, "stack_words": [NT]}
+    a = write(tmp_path, "a.dmp", snap([_mod_thread(340), idle]))
+    b = write(tmp_path, "b.dmp", snap([_mod_thread(344), idle]))
+    rc, out, err = run(capsys, "compare", "--pdb", PDB, "--dll", DLL, "--thread", "480", a, b)
+    assert rc == EXIT_NOT_FOUND == 2
+    assert "thread 480 has no address in CvGameCoreDLL.dll in any of the 2 dumps" in err
+    assert "civ4dbg dump" in err
+    assert "== thread" not in out and "thread(s) had no address" not in out
+
+
+def test_compare_thread_option_with_addresses_in_only_some_dumps_still_ranks(tmp_path, capsys):
+    a = write(tmp_path, "a.dmp", snap([_mod_thread(340)]))
+    b = write(tmp_path, "b.dmp", snap([{"tid": 340, "eip": NT, "stack_words": [NT]}]))
+    rc, out, _ = run(capsys, "compare", "--pdb", PDB, "--dll", DLL, "--thread", "340", "--min-dumps", "1", a, b)
+    assert rc == EXIT_OK and "== thread 340 " in out
+
+
+def test_compare_thread_option_absent_from_a_dump_is_still_exit_2(tmp_path, capsys):
+    a = write(tmp_path, "a.dmp", snap([_mod_thread(340)]))
+    b = write(tmp_path, "b.dmp", snap([_mod_thread(344)]))
+    rc, _, err = run(capsys, "compare", "--pdb", PDB, "--dll", DLL, "--thread", "340", a, b)
+    assert rc == EXIT_NOT_FOUND and "thread 340 is not in dump" in err
+
+
+def test_compare_detects_a_module_thread_through_stack_words_alone(tmp_path, capsys):
+    # eip outside the module: only the stack words carry module addresses.
+    idle = {"tid": 480, "eip": NT, "stack_words": [NT]}
+    a = write(tmp_path, "a.dmp", snap([_mod_thread(340, eip=NT), idle]))
+    b = write(tmp_path, "b.dmp", snap([_mod_thread(344, eip=NT), idle]))
+    rc, out, err = run(capsys, "compare", "--pdb", PDB, "--dll", DLL, a, b)
+    assert rc == EXIT_NOT_FOUND and "[0] a.dmp: 340; [1] b.dmp: 344" in err
+
+
+def test_compare_common_thread_with_an_empty_ranking_still_counts_as_compared(tmp_path, capsys):
+    # Same module thread id, but --min-dumps above what recurs is clamped to the dump count; use disjoint
+    # functions so nothing recurs in both dumps: the thread was compared, so no refusal.
+    a = write(tmp_path, "a.dmp", snap([_mod_thread(340, eip=NT, words=(0x1071,)), _mod_thread(350)]))
+    b = write(tmp_path, "b.dmp", snap([_mod_thread(340, eip=NT, words=(0x1011,)), _mod_thread(354)]))
+    rc, out, _ = run(capsys, "compare", "--pdb", PDB, "--dll", DLL, "--min-dumps", "2", a, b)
+    assert rc == EXIT_OK and "== thread 340 (0x154): 0 functions" in out and "were left out" in out
+
+
 def test_compare_lists_dump_kinds_and_thread_counts(tmp_path, capsys):
     a = write(tmp_path, "a.dmp", hang([ret(0x1071)]))
     b = write(tmp_path, "b.dmp", hang([ret(0x1071)], with_exception=False))

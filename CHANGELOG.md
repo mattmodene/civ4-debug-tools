@@ -1,7 +1,7 @@
 # Changelog
 
 **Purpose**: Notable changes to civ4-debug-tools, one section per release.
-**Last Updated**: 2026-11-07
+**Last Updated**: 2026-11-17
 **Authors**: Matt Modene ([@mattmodene](https://github.com/mattmodene))
 
 ---
@@ -19,6 +19,32 @@ Standards deviations are recorded in `.standards-config.json` and printed by the
 
 ## [Unreleased]
 
+### Added
+
+- `compare --crash-thread`: for crash dumps of one crash taken in separate runs (thread ids differ per
+  run), compares each dump's exception (crashing) thread whatever its id, as one logical thread. Prints a
+  header per dump (exception code, faulting module+offset with the PDB's function, thread id, process id
+  when the dump has a MiscInfo stream), the usual ranking, and an `# evidence:` line saying whether the
+  exception code and faulting module+offset are identical in all dumps and how many leading scan frames
+  agree, and whether the faulting module is the same build in all dumps (judged from the dumps' own module
+  lists, with or without `--dll`; a separate `#` line says when that rests on timestamp and size only because a
+  CodeView id is unavailable); with three or more dumps it names the dumps that differ from the most
+  common value. It says "consistent with the same crash" only when code and module+offset match and the
+  module build does not differ; a fault address in no listed module is reported as not comparable as
+  module+offset. Every dump must
+  have an exception record (a dump without one, or with only a breakpoint exception taken for a debugger
+  break-in, exits 2 naming the dump; a genuine breakpoint or assert crash is refused too);
+  the option cannot be combined with `--thread` (usage error, exit 2).
+- `compare` (default mode): when some threads carrying addresses in the module are not in every dump and at
+  least one other is ranked, one `# thread(s) with addresses in ... were left out: ...` line names the
+  left-out ones (at most 10 ids per dump, then "... and N more").
+- `compare` refusal message: suggests `--crash-thread` when every dump has an exception record, and says the
+  dumps come from different processes when their MiscInfo process ids are all present and differ.
+- Python API: `CrashInfo.process_id`, the ProcessId from the MiscInfo stream (15) when the stream flags it
+  valid, else `None`; and `Module.cv_id`, the CodeView GUID and age from a module's RSDS record, else `None`.
+  A MiscInfo stream or CodeView record that is damaged, too short or outside the file is ignored and never
+  makes a command fail.
+
 ### Changed
 
 - CI: the Python floor leg now runs the latest 3.11 patch release on all three operating systems
@@ -31,6 +57,16 @@ Standards deviations are recorded in `.standards-config.json` and printed by the
 - CI: the Windows job is now required, like Linux and macOS.
 - Platform support: the Windows and macOS rows for the offline reader, CLI, `civ4dbg exec` and the
   installer move from "untested (CI pending)" to "CI only".
+- **Exit code 0 becomes 2 in two `compare` cases that used to succeed without comparing anything.**
+  (1) Without `--thread`, when the only threads carrying addresses in the module have ids that are not
+  present in every dump (typical for crash dumps of the same crash from separate runs: the idle threads share
+  ids, the crashing thread's id differs), `compare` now exits 2 with a message on stderr instead of exiting 0
+  with only the idle-thread count. (2) With `--thread TID`, when that thread has no address in the module in
+  any dump, `compare` now exits 2 with a message instead of exiting 0 with the idle-thread count. **Scripts that
+  relied on exit 0 for these previously silent cases will now see exit 2.**
+- `compare`: when no dump has any thread with an address in the module (and no `--thread` was given), the
+  `#` comment line now reads `# none of the N dumps has a thread with an address in <module>`; the exit
+  code is still 0.
 
 ## [0.1.0] - 2026-11-07
 
