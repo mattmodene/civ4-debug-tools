@@ -8,7 +8,7 @@ reads PDBs directly. Standard library only.
 **Last Updated**: 2026-11-17
 **Authors**: Matt Modene ([@mattmodene](https://github.com/mattmodene))
 
-Version 0.1.0 (see [CHANGELOG.md](./CHANGELOG.md)). Released under the MIT license.
+Version 0.2.0 (see [CHANGELOG.md](./CHANGELOG.md)). Released under the MIT license.
 
 Not affiliated with Firaxis, 2K or the Caveman2Cosmos team. This repository ships no game
 files: you supply your own DLL, PDB and minidumps.

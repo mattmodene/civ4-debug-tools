@@ -19,6 +19,8 @@ Standards deviations are recorded in `.standards-config.json` and printed by the
 
 ## [Unreleased]
 
+## [0.2.0] - 2026-11-17
+
 ### Added
 
 - `compare --crash-thread`: for crash dumps of one crash taken in separate runs (thread ids differ per
@@ -145,5 +147,6 @@ Initial public release.
 - Not affiliated with Firaxis, 2K or the Caveman2Cosmos team. No game files are included.
 - Tested against the Caveman2Cosmos mod's build; the readers are not specific to it.
 
-[Unreleased]: https://github.com/mattmodene/civ4-debug-tools/compare/v0.1.0...HEAD
+[Unreleased]: https://github.com/mattmodene/civ4-debug-tools/compare/v0.2.0...HEAD
+[0.2.0]: https://github.com/mattmodene/civ4-debug-tools/compare/v0.1.0...v0.2.0
 [0.1.0]: https://github.com/mattmodene/civ4-debug-tools/releases/tag/v0.1.0
